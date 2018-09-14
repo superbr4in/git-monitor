@@ -1,47 +1,80 @@
 #!/bin/bash
 
-# --- Variables ---
+## --- Variables --- ##
 
 # Number of commits to be skipped
 n_skip=0
 # Number of commits to be displayed
 n_commits=0
 
-# --- Methods ---
+## --- Methods --- ##
 
+# Prints the current working directory status
 show_status()
 {
     git status --short
 }
-
 # Prints the selected git commit history
 show_log()
 {
     # Number of commits to be displayed
-    n_commits=$(( $(tput lines) - 25 ))
+    n_commits=20
 
-    echo "----------------------------------------------------"
-
-    # Invoke the 'git log' command
-    git --no-pager log --graph -n $n_commits --oneline --skip=$n_skip
-
-    echo "----------------------------------------------------"
+    git --no-pager log -n $n_commits --oneline --skip=$n_skip
 }
 
-# Waits for paging-related keys to be pressed and returns an ID number
-wait_for_paging_keys()
+# Prints a horizontal line
+draw_hline()
+{
+    cols=$(tput cols)
+    counter=0
+    while (( $counter < $cols )) ; do
+        printf "-"
+        counter=$(( $counter + 1 ))
+    done
+    printf "\n"
+}
+
+# Auxiliary output method
+align()
+{
+    for cmd in $@ ; do
+        draw_hline
+        eval "$cmd"
+    done
+    draw_hline
+}
+
+# Hexdumps a string
+to_hex()
+{
+    hex=$(xxd -ps -u <<< "$1")
+
+    # Cut off '0A'
+    echo "${hex:0:-2}"
+}
+
+# Waits for control characters
+wait_for_control()
 {
     while true ; do
-        read -sn 1 character
-        sequence+=$character
-        hex=$(xxd -ps -u <<< "$sequence")
-        case ${hex:(-8)} in
-            1B5B410A ) return 0 ;; # [Arrow Up]
-            1B5B420A ) return 1 ;; # [Arrow Down]
+        read -sn 1 char
+        char_hex=$(to_hex "$char")
+
+        if [[ $char == ":" ]] ; then
+            printf "$char "
+            return 0
+        fi
+
+        input_hex=$input_hex$char_hex
+
+        case ${input_hex:(-6)} in
+            "1B5B41" ) return 1 ;; # [Arrow Up]
+            "1B5B42" ) return 2 ;; # [Arrow Down]
         esac
-        case ${hex:(-10)} in
-            1B5B357E0A ) return 2 ;; # [Page Up]
-            1B5B367E0A ) return 3 ;; # [Page Down]
+        case ${input_hex:(-8)} in
+            "1B5B357E" ) return 3 ;; # [Page Up]
+            "1B5B367E" ) return 4 ;; # [Page Down]
         esac
     done
 }
@@ -50,23 +83,27 @@ wait_for_paging_keys()
 update_page()
 {
     while true ; do
-        wait_for_paging_keys
+        wait_for_control
 
         # Handle a pressed paging-related key accordingly
         case $? in
 
+            # Git command line
+            0 ) read git_cmd
+                eval "git $git_cmd" ;;
+
             # [Arrow Up]
-            0 ) if (( $n_skip > 0 )) ; then
+            1 ) if (( $n_skip > 0 )) ; then
                     n_skip=$(( $n_skip - 1 ))
                 else
                     continue
                 fi ;;
 
             # [Arrow Down]
-            1 ) n_skip=$(( $n_skip + 1 )) ;;
+            2 ) n_skip=$(( $n_skip + 1 )) ;;
 
             # [Page Up]
-            2 ) if (( $n_skip > $n_commits )) ; then
+            3 ) if (( $n_skip > $n_commits )) ; then
                     n_skip=$(( $n_skip - $n_commits ))
                 elif (( $n_skip > 0 )) ; then
                     n_skip=0
@@ -75,7 +112,7 @@ update_page()
                 fi ;;
 
             # [Page Down]
-            3 ) n_skip=$(( $n_skip + $n_commits )) ;;
+            4 ) n_skip=$(( $n_skip + $n_commits )) ;;
 
             # Unknown key, do not handle
             * ) continue ;;
@@ -87,13 +124,12 @@ update_page()
     done
 }
 
-# --- Program ---
+## --- Program --- ##
 
 while true ; do
-    clear
+    tput reset
 
-    show_status
-    show_log
+    align show_status show_log
 
     # Wait (and catch input) for 50ms to prevent too much flickering
     read -st 0.05
